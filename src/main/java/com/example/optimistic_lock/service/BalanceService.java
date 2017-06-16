@@ -3,14 +3,13 @@ package com.example.optimistic_lock.service;
 import com.example.optimistic_lock.entity.TBalance;
 import com.example.optimistic_lock.entity.TBalanceExample;
 import com.example.optimistic_lock.mapper.TBalanceMapper;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 
 /**
@@ -25,10 +24,6 @@ public class BalanceService {
     @Autowired
     private TBalanceMapper tBalanceMapper;
 
-    @Transactional(readOnly = true)
-    public TBalance getBalanceById(int id) {
-        return tBalanceMapper.selectByPrimaryKey(id);
-    }
 
     @Transactional
     public void prepareBalance() {
@@ -41,6 +36,10 @@ public class BalanceService {
         tBalanceMapper.insert(balance);
     }
 
+    @Transactional(readOnly = true)
+    public TBalance getBalanceById(Integer id) {
+        return tBalanceMapper.selectByPrimaryKey(id);
+    }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void addBalanceWithoutTransaction(int id, int amount) {
@@ -57,9 +56,6 @@ public class BalanceService {
      * Isolation.DEFAULT of mysql is Isolation.REPEATABLE_READ
      * <p>
      * <b>will cause dead loop</b>
-     *
-     * @param id
-     * @param amount
      */
     @Transactional(isolation = Isolation.REPEATABLE_READ)
     public void addBalanceWithRepeatableRead(int id, int amount) {
@@ -67,17 +63,25 @@ public class BalanceService {
     }
 
 
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    public void addBalanceInPessimisticMode(int id, int amount) {
+        TBalance balance = tBalanceMapper.selectByPrimaryKey(id);
+        balance.setBalance(balance.getBalance() + amount);
+        tBalanceMapper.updateByPrimaryKeySelective(balance);
+    }
+
     private void addBalanceInternal(int id, int amount) {
         TBalance balance;
         TBalance newBalance = new TBalance();
         TBalanceExample example = new TBalanceExample();
         do {
-            balance = getBalanceById(1);
+            balance = tBalanceMapper.selectByPrimaryKey(id);
             checkCounter.incrementAndGet();
             log.debug("{}", balance);
 
             example.clear();
-            example.createCriteria().andIdEqualTo(balance.getId()).andVersionEqualTo(balance.getVersion());
+            example.createCriteria().andIdEqualTo(balance.getId())
+                .andVersionEqualTo(balance.getVersion());
 
             newBalance.setId(id);
             newBalance.setBalance(balance.getBalance() + amount);
@@ -104,7 +108,8 @@ public class BalanceService {
             log.debug("{}", balance);
 
             example.clear();
-            example.createCriteria().andIdEqualTo(balance.getId()).andVersionEqualTo(balance.getVersion());
+            example.createCriteria().andIdEqualTo(balance.getId())
+                .andVersionEqualTo(balance.getVersion());
 
             newBalance.setId(id);
             newBalance.setBalance(balance.getBalance() + amount);
@@ -112,7 +117,7 @@ public class BalanceService {
         } while (updateBalanceByExample(newBalance, example) == 0);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int updateBalanceByExample(TBalance balance, TBalanceExample example) {
         return tBalanceMapper.updateByExampleSelective(balance, example);
     }

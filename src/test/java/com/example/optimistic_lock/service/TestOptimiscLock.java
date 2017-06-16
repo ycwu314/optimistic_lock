@@ -2,14 +2,20 @@ package com.example.optimistic_lock.service;
 
 import com.example.optimistic_lock.OptimisticLockApplicationTests;
 import com.example.optimistic_lock.entity.TBalance;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-
-import java.util.concurrent.*;
-import java.util.stream.IntStream;
 
 /**
  * Created by ycwu on 2017/6/11.
@@ -31,6 +37,7 @@ public class TestOptimiscLock extends OptimisticLockApplicationTests {
 
 
     interface InvokeMethod {
+
         void process();
     }
 
@@ -48,15 +55,16 @@ public class TestOptimiscLock extends OptimisticLockApplicationTests {
         try {
             log.info("waiting thread work done...");
             countDownLatch.await();
-            executorService.shutdown();
         } catch (InterruptedException e) {
             e.printStackTrace();
+        } finally {
+            executorService.shutdown();
         }
 
         TBalance balance = balanceService.getBalanceById(1);
         log.info("{}", balance);
         log.info("check counter={}", BalanceService.checkCounter);
-        Assert.assertEquals(150, balance.getBalance().intValue());
+        Assert.assertEquals(100 + threadCount, balance.getBalance().intValue());
 
     }
 
@@ -68,9 +76,10 @@ public class TestOptimiscLock extends OptimisticLockApplicationTests {
     }
 
     /**
-     * mysql > 5.1, If you are using InnoDB tables and the transaction isolation level is READ COMMITTED or READ UNCOMMITTED, only row-based logging can be used.<br>
-     * <a>https://dev.mysql.com/doc/refman/5.7/en/binary-log-setting.html</a>
-     * the performance is generally good for the test
+     * mysql > 5.1, If you are using InnoDB tables and the transaction isolation level is READ
+     * COMMITTED or READ UNCOMMITTED, only row-based logging can be used.<br>
+     * <a>https://dev.mysql.com/doc/refman/5.7/en/binary-log-setting.html</a> the performance is
+     * generally good for the test
      */
     @Test
     public void testAddBalanceWithReadCommitted() {
@@ -83,8 +92,6 @@ public class TestOptimiscLock extends OptimisticLockApplicationTests {
      * RR will cause problem.<br>
      * only the 1 thread successfully update 100->101.<br>
      * others will always read 100 as in repeatable read, which will end up in dead loop
-     *
-     * @throws InterruptedException
      */
     @Test
     public void testAddBalanceWithRepeatableRead() throws InterruptedException {
@@ -103,7 +110,8 @@ public class TestOptimiscLock extends OptimisticLockApplicationTests {
          * TODO change Thread.sleep() to Awaitility  <a>https://github.com/awaitility/awaitility</a>
          */
         Thread.sleep(5000L);
-        log.info("check counter={}, assume dead loop, interrupted thread", BalanceService.checkCounter.get());
+        log.info("check counter={}, assume dead loop, interrupted thread",
+            BalanceService.checkCounter.get());
         deadLoopThread.interrupt();
 
         Assert.assertEquals(101, balanceService.getBalanceById(1).getBalance().intValue());
@@ -133,7 +141,8 @@ public class TestOptimiscLock extends OptimisticLockApplicationTests {
             e.printStackTrace();
         }
 
-        log.info("check counter={},dead loop, interrupted thread", BalanceService.checkCounter.get());
+        log.info("check counter={},dead loop, interrupted thread",
+            BalanceService.checkCounter.get());
         Assert.assertNotNull(ex);
         Assert.assertEquals(101, balanceService.getBalanceById(1).getBalance().intValue());
     }
@@ -146,6 +155,16 @@ public class TestOptimiscLock extends OptimisticLockApplicationTests {
     public void testAddBalanceSeparatedSteps() {
         doTestInternal(() -> {
             balanceService.addBalanceSeparatedSteps(1, 1);
+        });
+    }
+
+    /**
+     * will cause dead lock
+     */
+    @Test
+    public void testAddBalanceInPessimisticMode() {
+        doTestInternal(() -> {
+            balanceService.addBalanceInPessimisticMode(1, 1);
         });
     }
 
